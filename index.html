@@ -1028,8 +1028,9 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeIframe(
 </script>
 
 <script>
-(function() { var el = document.getElementById("liquid-ether-container"); if (!el) return; var init = function() { if (typeof LiquidEther === "undefined" || typeof THREE === "undefined") return; var ether = LiquidEther(el, { colors: ["#5227FF", "#FF9FFC", "#B497CF"], mouseForce: 20, cursorSize: 100, resolution: 0.5, autoDemo: true, autoSpeed: 0.5, autoIntensity: 2.2, autoResumeDelay: 3000, autoRampDuration: 0.6, takeoverDuration: 0.25, isViscous: false, viscous: 30, iterationsViscous: 32, iterationsPoisson: 32 }); window.__liquidEther = ether; }; if (typeof LiquidEther !== "undefined" && typeof THREE !== "undefined") { init(); } else { window.addEventListener("load", init); }; })();
+(function() { var el = document.getElementById("liquid-ether-container"); if (!el) return; var init = function() { if (typeof LiquidEther === "undefined" || typeof THREE === "undefined") return; var ether = LiquidEther(el, { colors: ["#5227FF", "#FF9FFC", "#B497CF"], mouseForce: 20, cursorSize: 100, resolution: 0.5, autoDemo: true, autoSpeed: 0.5, autoIntensity: 2.2, autoResumeDelay: 1000, autoRampDuration: 0.6, takeoverDuration: 0.25, isViscous: false, viscous: 30, iterationsViscous: 32, iterationsPoisson: 32 }); window.__liquidEther = ether; }; if (typeof LiquidEther !== "undefined" && typeof THREE !== "undefined") { init(); } else { window.addEventListener("load", init); }; })();
 </script>
 </body>
 </html>
+
 
