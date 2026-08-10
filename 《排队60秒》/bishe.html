@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>排队60秒互动装置</title>
+  <style>
+    :root {
+      --bg1:#fff7e8; --bg2:#ffe9c9; --text:#4d3925; --accent:#ff8f4a;
+      --ui-fill: rgba(0,0,0,0.4);
+      --ui-read-shadow: 0 0 1px #000, 0 1px 2px rgba(0,0,0,.95), 0 0 14px rgba(0,0,0,.55);
+    }
+    * { box-sizing:border-box; margin:0; padding:0; font-family:"Microsoft YaHei",sans-serif; }
+    body { overflow:hidden; background:linear-gradient(160deg,var(--bg1),var(--bg2)); color:var(--text); }
+    /* 视频最底层，canvas（道具+手势预览）在其上，UI 再在上层可点按 */
+    .scene-layer { position:fixed; inset:0; z-index:4; pointer-events:none; }
+    #stage { position:fixed; inset:0; width:100vw; height:100vh; display:block; z-index:10; pointer-events:auto; }
+    /* 手势准星/自定义手图：叠在主 canvas 之上，避免被道具挡住 */
+    #handLayer { position:fixed; inset:0; width:100vw; height:100vh; display:block; z-index:15; pointer-events:none; }
+    .ui-shell { position:fixed; inset:0; z-index:20; pointer-events:none; }
+    #stallWrap { position:absolute; inset:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; transition:transform .45s ease, opacity .5s ease; }
+    #stallVideo { width:100%; height:100%; object-fit:cover; display:none; }
+    #stallFallback { width:100%; height:100%; border:2px dashed rgba(255,255,255,.45); border-radius:14px; background:var(--ui-fill); color:#fff; font-size:22px; font-weight:600; text-shadow:var(--ui-read-shadow); display:flex; align-items:center; justify-content:center; text-align:center; padding:12px; }
+    #uiLayer { position:absolute; inset:0; pointer-events:none; }
+    #topBar { position:absolute; top:14px; left:50%; transform:translateX(-50%); background:var(--ui-fill); border:2px solid rgba(255,255,255,.35); border-radius:999px; padding:10px 22px; font-size:24px; font-weight:800; color:#fff; text-shadow:var(--ui-read-shadow); z-index:20; }
+    #statusMsg { position:absolute; top:66px; left:50%; transform:translateX(-50%); font-size:17px; font-weight:600; background:var(--ui-fill); color:#fff; border:1px solid rgba(255,255,255,.35); border-radius:10px; padding:8px 14px; text-shadow:var(--ui-read-shadow); z-index:20; max-width:90%; text-align:center; }
+    #audioToggleBtn { position:absolute; top:98px; left:50%; transform:translateX(-50%); border:1px solid rgba(255,255,255,.4); border-radius:999px; padding:8px 16px; font-size:14px; font-weight:600; background:var(--ui-fill); color:#fff; text-shadow:var(--ui-read-shadow); cursor:pointer; z-index:21; pointer-events:auto; }
+    /* 与主舞台一致：竖屏 9:16（宽:高 = 9:16） */
+    #cameraPreview {
+      position:fixed; right:14px; bottom:14px;
+      width:min(132px, 22vw);
+      aspect-ratio:9 / 16;
+      height:auto;
+      max-height:min(48vh, 360px);
+      border-radius:12px;
+      object-fit:cover;
+      object-position:center center;
+      border:2px solid rgba(255,255,255,.55);
+      box-shadow:0 8px 18px rgba(0,0,0,.25);
+      z-index:25;
+      transform:scaleX(-1);
+      background:rgba(0,0,0,0.35);
+      opacity:0.92;
+    }
+    #assetErrorBox { position:absolute; left:12px; right:12px; bottom:12px; display:none; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.35); background:var(--ui-fill); color:#fff; font-size:14px; font-weight:600; line-height:1.45; text-shadow:var(--ui-read-shadow); z-index:34; pointer-events:none; white-space:pre-line; }
+    #popup { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) scale(.9); min-width:280px; max-width:80vw; padding:16px 22px; border-radius:14px; background:var(--ui-fill); border:2px solid rgba(255,255,255,.35); box-shadow:0 10px 30px rgba(0,0,0,.35); font-size:22px; font-weight:700; text-align:center; color:#fff; text-shadow:var(--ui-read-shadow); z-index:50; pointer-events:none; opacity:0; transition:.2s ease; }
+    #popup.show { opacity:1; transform:translate(-50%,-50%) scale(1); }
+    /* 排队成功 / 领取煎饼：淡黄底 + 深字（与全页灰黑半透明区分） */
+    #resultPanel {
+      position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:16px;
+      background: linear-gradient(165deg, #fffbeb 0%, #fff3d4 48%, #ffefc4 100%);
+      z-index:35; text-align:center; padding:20px; pointer-events:auto;
+      box-shadow: inset 0 0 0 1px rgba(255, 200, 120, 0.35);
+    }
+    #resultPanel h2 {
+      font-size: 44px;
+      font-weight: 800;
+      color: var(--text);
+      text-shadow: 0 1px 0 rgba(255,255,255,.75);
+    }
+    #resultPanel p {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text);
+      text-shadow: 0 1px 0 rgba(255,255,255,.6);
+      line-height: 1.5;
+      max-width: 90%;
+      opacity: 0.92;
+    }
+    #resultPanel .action-btn {
+      background: linear-gradient(180deg, #ffb366, var(--accent));
+      color: #fff;
+      border-color: rgba(180, 90, 30, 0.45);
+      text-shadow: 0 1px 2px rgba(0,0,0,.2);
+    }
+    #resultPanel #claimPancakeImg { background: rgba(255, 255, 255, 0.55); border-color: rgba(77, 57, 37, 0.2); }
+    #resultPanel #claimPancakeFallback {
+      background: rgba(255, 255, 255, 0.5);
+      border-color: rgba(255, 180, 90, 0.55);
+      color: var(--text);
+      text-shadow: none;
+    }
+    #failPanel { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:20px; background:var(--ui-fill); z-index:40; text-align:center; padding:24px; pointer-events:auto; }
+    #failPanel h2 { font-size:36px; font-weight:800; color:#fff; text-shadow:var(--ui-read-shadow); }
+    #failPanel p { font-size:20px; font-weight:600; color:#fff; line-height:1.5; max-width:90%; text-shadow:var(--ui-read-shadow); }
+    #claimPancakeWrap { display:none; flex-direction:column; align-items:center; gap:10px; width:100%; max-width:min(85vw,420px); }
+    #claimPancakeImg { width:100%; max-height:min(48vh,380px); object-fit:contain; display:none; border:2px solid rgba(255,255,255,.4); border-radius:12px; background:rgba(0,0,0,0.35); }
+    #claimPancakeFallback { width:100%; min-height:200px; max-height:min(48vh,380px); border:2px dashed rgba(255,255,255,.45); border-radius:12px; background:var(--ui-fill); color:#fff; font-size:18px; font-weight:600; text-shadow:var(--ui-read-shadow); display:flex; align-items:center; justify-content:center; text-align:center; padding:16px; }
+    .action-btn { border:1px solid rgba(255,255,255,.45); border-radius:999px; background:var(--ui-fill); color:#fff; font-size:22px; font-weight:700; padding:12px 28px; cursor:pointer; text-shadow:var(--ui-read-shadow); }
+    #restartBtn { display:none; }
+  
+    #videoSeekBar {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      width: min(600px, 80vw); height: 6px; background: rgba(0,0,0,.45);
+      border-radius: 999px; z-index: 30; cursor: pointer; pointer-events: auto;
+      opacity: 0; transition: opacity .3s;
+    }
+    #videoSeekBar:hover, #videoSeekBar.show { opacity: 1; }
+    #videoSeekFill {
+      height: 100%; width: 0%; border-radius: 999px;
+      background: linear-gradient(90deg, #ff8f4a, #ffb366);
+      transition: width .1s linear;
+    }
+  </style>
+</head>
+<body>
+  <div class="scene-layer" id="sceneLayer">
+    <div id="stallWrap">
+      <video id="stallVideo" autoplay muted playsinline></video>
+      <div id="videoSeekBar"><div id="videoSeekFill"></div></div>
+      <div id="stallFallback">煎饼果子摊位视频占位<br/>（后续替换视频）</div>
+    </div>
+  </div>
+  <canvas id="stage"></canvas>
+  <canvas id="handLayer"></canvas>
+  <div class="ui-shell" id="uiShell">
+    <div id="uiLayer">
+      <div id="topBar">剩余道具：30</div>
+      <div id="statusMsg">挥挥手，随机收集道具！</div>
+      <button id="audioToggleBtn">开启视频声音</button>
+      <div id="resultPanel">
+        <h2>他走了！轮到你了！</h2>
+        <p>收集满30个道具后可领取煎饼</p>
+        <button id="claimBtn" class="action-btn">领取煎饼</button>
+        <div id="claimPancakeWrap">
+          <img id="claimPancakeImg" alt="煎饼成品" />
+          <div id="claimPancakeFallback">煎饼成品图占位<br/>（ASSET_CONFIG.pancakeImageSrc）</div>
+        </div>
+        <button id="restartBtn" class="action-btn">再来一次</button>
+      </div>
+      <div id="failPanel">
+        <h2>排队失败</h2>
+        <p>请点击下方按钮重新开始。</p>
+        <button id="failRequeueBtn" class="action-btn">重新开始</button>
+      </div>
+      <div id="assetErrorBox"></div>
+    </div>
+  </div>
+  <video id="cameraPreview" autoplay playsinline muted></video>
+  <div id="popup"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script>const ASSET_CONFIG = {
+      stallVideoSrc: "https://github.com/yanruzeng1-ai/yann-portfolio/releases/download/v1.0/stall_compressed.mp4?t=1786363346",       // 例如 "./videos/stall.mp4"
+      pancakeImageSrc: "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/pancake.png",                     // 领取煎饼时大图，例如 "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/pancake.png"
+      itemBreakSoundSrc: "",                   // 留空=使用内置合成破碎音；填写路径则用你的 mp3/wav
+      walletImageSrc: "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/wallet.png",      // 钱包素材（为空时用👛）
+      /**
+       * 替换默认蓝色准星：填你的图片路径（相对本页或绝对 URL）。
+       * 留空 "" = 继续用内置准星。建议 PNG/WebP 透明底；正方形或接近正方形最省事。
+       * 显示位置以 MediaPipe「掌心」点为准；锚点见 handPointerAnchorX/Y。
+       */
+      handPointerImageSrc: "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/zhizhen.png",
+      /** 图标在画布上的边长（像素），例如 64–120 */
+      handPointerSizePx: 88,
+      /** 0–1：图片里哪一点对准掌心。0.5,0.5=图中心；想指尖对准可试 0.5, 0.15（视你的图裁切调整） */
+      handPointerAnchorX: 0.5,
+      handPointerAnchorY: 0.5,
+      itemImageByText: {       // 道具素材映射（为空时用文字气泡）
+        "葱花": "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/conghua.png",
+        "芝麻": "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/zhima.png",
+        "鸡蛋": "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/jidan.png",
+        "薄脆": "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/baocui.png",
+        "面糊": "https://raw.githubusercontent.com/yanruzeng1-ai/yann-portfolio/main/%E3%80%8A%E6%8E%92%E9%98%9F60%E7%A7%92%E3%80%8B/images/mianhu.png"
+      }
+    };
+
+    const canvas = document.getElementById("stage");
+    const ctx = canvas.getContext("2d");
+    const handCanvas = document.getElementById("handLayer");
+    const hctx = handCanvas ? handCanvas.getContext("2d") : null;
+    const topBar = document.getElementById("topBar");
+    const statusMsg = document.getElementById("statusMsg");
+    const audioToggleBtn = document.getElementById("audioToggleBtn");
+    const cameraPreview = document.getElementById("cameraPreview");
+    const popup = document.getElementById("popup");
+    const assetErrorBox = document.getElementById("assetErrorBox");
+    const resultPanel = document.getElementById("resultPanel");
+    const failPanel = document.getElementById("failPanel");
+    const failRequeueBtn = document.getElementById("failRequeueBtn");
+    const claimBtn = document.getElementById("claimBtn");
+    const restartBtn = document.getElementById("restartBtn");
+    const stallWrap = document.getElementById("stallWrap");
+    const stallVideo = document.getElementById("stallVideo");
+    const stallFallback = document.getElementById("stallFallback");
+    const sceneLayer = document.getElementById("sceneLayer");
+    const uiShell = document.getElementById("uiShell");
+    const claimPancakeWrap = document.getElementById("claimPancakeWrap");
+    const claimPancakeImg = document.getElementById("claimPancakeImg");
+    const claimPancakeFallback = document.getElementById("claimPancakeFallback");
+
+    const ALL_TARGET = 30;
+    const ROUND_DURATION_MS = 60000;
+    /** 最后一个道具须早于片尾若干毫秒刷出，否则视频 `ended` 与第 30 个刷在同刻会误判失败 */
+    const SPAWN_SPREAD_END_BUFFER_MS = 4000;
+    const SPAWN_WINDOW_MS = Math.max(8000, ROUND_DURATION_MS - SPAWN_SPREAD_END_BUFFER_MS);
+    const MAX_NEXT_SPAWN_DELAY_MS = 2500;
+    const SPAWN_SLOT_MS = ALL_TARGET > 1 ? SPAWN_WINDOW_MS / (ALL_TARGET - 1) : SPAWN_WINDOW_MS;
+    const TARGET_SCREEN_RATIO = 16 / 9; // 高:宽 = 16:9（即宽:高 = 9:16）
+
+    /** 手势：只跟一只；摄像头整帧送 MediaPipe（与最初逻辑一致） */
+    const HAND_TRACK = {
+      camIdealW: 1280,
+      camIdealH: 720,
+      palmSmooth: 0.35,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.55,
+      minTrackingConfidence: 0.55
+    };
+    const ITEM_POOL = [
+      { text: "葱花", icon: "🧅" },
+      { text: "芝麻", icon: "🫘" },
+      { text: "鸡蛋", icon: "🥚" },
+      { text: "薄脆", icon: "🍘" },
+      { text: "面糊", icon: "煎饼" }
+    ];
+
+    let W = 0, H = 0;
+    let playArea = { x: 0, y: 0, w: 0, h: 0 };
+    let items = [];
+    let remaining = ALL_TARGET;
+    let finished = false;
+    let roundLost = false;
+    let spawnTimer = null;
+    let popupTimer = null;
+    let lastCollectAt = 0;
+    let purse = null;
+    let walletImage = null;
+    let handPointerImage = null;
+    const itemImages = {};
+    let handPreview = null;
+    /** 收集后短暂保留「收集到」文案，再恢复显示手势坐标 */
+    let hideHandCoordsUntil = 0;
+    let particles = [];
+    let spawnLock = false;
+    let spawnedCount = 0;
+    let roundStartTs = 0;
+    let nextSpawnTimeout = null;
+    const triggered = new Set();
+    const assetErrorMessages = [];
+    let itemBreakSound = null;
+    let breakSoundCtx = null;
+    /** 整幅摄像头送入 MediaPipe 时，用于把 landmark 归一化到「全画面」坐标 */
+    let lastRoiCrop = { sx: 0, sy: 0, vw: 1, vh: 1, roiW: 1, roiH: 1 };
+    let palmSmoothedFull = null;
+
+    function getBreakSoundContext() {
+      if (!breakSoundCtx) {
+        breakSoundCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return breakSoundCtx;
+    }
+
+    /** 内置：脆碎+短高频，无需音频文件 */
+    function playBuiltinItemBreakSound() {
+      const ctx = getBreakSoundContext();
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      const t0 = ctx.currentTime;
+      const dur = 0.16;
+      const sr = ctx.sampleRate;
+      const n = Math.floor(sr * dur);
+      const buf = ctx.createBuffer(1, n, sr);
+      const ch = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) {
+        ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.8);
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.setValueAtTime(3200, t0);
+      bp.Q.setValueAtTime(0.65, t0);
+      const gNoise = ctx.createGain();
+      gNoise.gain.setValueAtTime(0.42, t0);
+      gNoise.gain.exponentialRampToValueAtTime(0.008, t0 + dur);
+      noise.connect(bp);
+      bp.connect(gNoise);
+      gNoise.connect(ctx.destination);
+      noise.start(t0);
+      noise.stop(t0 + dur);
+
+      const osc = ctx.createOscillator();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(1800, t0);
+      osc.frequency.exponentialRampToValueAtTime(350, t0 + 0.07);
+      const gOsc = ctx.createGain();
+      gOsc.gain.setValueAtTime(0.06, t0);
+      gOsc.gain.exponentialRampToValueAtTime(0.001, t0 + 0.09);
+      osc.connect(gOsc);
+      gOsc.connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + 0.09);
+    }
+
+    function hasStallVideo() {
+      return !!(ASSET_CONFIG.stallVideoSrc && stallVideo.src);
+    }
+
+    /** 片长播完：未清完 30 个则失败面板；已清完则结算胜利 */
+    function onStallVideoEnded() {
+      if (!roundStartTs || finished) return;
+      clearTimeout(nextSpawnTimeout);
+      nextSpawnTimeout = null;
+      if (remaining > 0) {
+        failRoundByTimeout();
+      } else {
+        completeGame();
+      }
+    }
+
+    /** 视频连续播放满约 60s（按片长设 playbackRate），不在每帧 scrub currentTime */
+    function restartStallVideoWithRoundClock() {
+      if (!hasStallVideo()) return;
+      stallVideo.pause();
+      stallVideo.currentTime = 0;
+      stallVideo.onended = onStallVideoEnded;
+      const kick = () => {
+        const d = stallVideo.duration;
+        if (d && isFinite(d) && d > 0) {
+          const targetSec = ROUND_DURATION_MS / 1000;
+          const r = d / targetSec;
+          stallVideo.playbackRate = Math.min(4, Math.max(0.25, r));
+        } else {
+          stallVideo.playbackRate = 1;
+        }
+        if (!document.hidden) stallVideo.play().catch(() => {});
+      };
+      if (stallVideo.readyState >= 1) kick();
+      else stallVideo.addEventListener("loadedmetadata", kick, { once: true });
+    }
+
+    /** 时间到仍未消完：停止交互、排队失败、点击「重新开始」 */
+    function failRoundByTimeout() {
+      if (finished) return;
+      roundLost = true;
+      finished = true;
+      clearTimeout(nextSpawnTimeout);
+      clearInterval(spawnTimer);
+      spawnLock = true;
+      particles = [];
+      purse = null;
+      handPreview = null;
+      if (stallVideo.src) stallVideo.pause();
+      failPanel.style.display = "flex";
+      setStatusText("排队失败，请点击「重新开始」");
+      showPopup("排队失败", 3800);
+    }
+
+    function playItemBreakSound() {
+      if (itemBreakSound && itemBreakSound.src) {
+        try {
+          const a = itemBreakSound.cloneNode();
+          a.volume = itemBreakSound.volume;
+          a.play().catch(() => playBuiltinItemBreakSound());
+        } catch (e) {
+          playBuiltinItemBreakSound();
+        }
+      } else {
+        playBuiltinItemBreakSound();
+      }
+    }
+
+    function setupSceneImages() {
+      if (ASSET_CONFIG.itemBreakSoundSrc) {
+        itemBreakSound = new Audio(ASSET_CONFIG.itemBreakSoundSrc);
+        itemBreakSound.preload = "auto";
+        itemBreakSound.onerror = () => reportAssetError("道具破碎音效", ASSET_CONFIG.itemBreakSoundSrc);
+      }
+      if (ASSET_CONFIG.stallVideoSrc) {
+        stallVideo.src = ASSET_CONFIG.stallVideoSrc;
+        stallVideo.style.display = "block";
+        stallFallback.style.display = "none";
+        stallVideo.onerror = () => reportAssetError("摊位视频", ASSET_CONFIG.stallVideoSrc);
+      }
+      if (ASSET_CONFIG.walletImageSrc) {
+        walletImage = new Image();
+        walletImage.src = ASSET_CONFIG.walletImageSrc;
+        walletImage.onerror = () => reportAssetError("钱包图片", ASSET_CONFIG.walletImageSrc);
+      }
+      if (ASSET_CONFIG.handPointerImageSrc) {
+        handPointerImage = new Image();
+        handPointerImage.src = ASSET_CONFIG.handPointerImageSrc;
+        handPointerImage.onerror = () => reportAssetError("手势指针图", ASSET_CONFIG.handPointerImageSrc);
+      }
+      for (const key of Object.keys(ASSET_CONFIG.itemImageByText || {})) {
+        const src = ASSET_CONFIG.itemImageByText[key];
+        if (!src) continue;
+        const img = new Image();
+        img.src = src;
+        img.onerror = () => reportAssetError(`道具图片:${key}`, src);
+        itemImages[key] = img;
+      }
+    }
+
+    function resize() {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      if (handCanvas) {
+        handCanvas.width = W;
+        handCanvas.height = H;
+      }
+      const areaW = Math.min(W, H / TARGET_SCREEN_RATIO);
+      const areaH = areaW * TARGET_SCREEN_RATIO;
+      playArea = {
+        x: (W - areaW) * 0.5,
+        y: (H - areaH) * 0.5,
+        w: areaW,
+        h: areaH
+      };
+      sceneLayer.style.left = `${playArea.x}px`;
+      sceneLayer.style.top = `${playArea.y}px`;
+      sceneLayer.style.width = `${playArea.w}px`;
+      sceneLayer.style.height = `${playArea.h}px`;
+      uiShell.style.left = `${playArea.x}px`;
+      uiShell.style.top = `${playArea.y}px`;
+      uiShell.style.width = `${playArea.w}px`;
+      uiShell.style.height = `${playArea.h}px`;
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    function setStatusText(text) {
+      statusMsg.textContent = text;
+    }
+
+    function reportAssetError(label, src) {
+      const message = `素材加载失败：${label}${src ? ` (${src})` : ""}`;
+      if (assetErrorMessages.includes(message)) return;
+      assetErrorMessages.push(message);
+      assetErrorBox.textContent = assetErrorMessages.join("\n");
+      assetErrorBox.style.display = "block";
+    }
+
+    function showPopup(text, ms = 1800) {
+      popup.textContent = text;
+      popup.classList.add("show");
+      clearTimeout(popupTimer);
+      popupTimer = setTimeout(() => popup.classList.remove("show"), ms);
+    }
+
+    function getNextSpawnDelay() {
+      const now = performance.now();
+      if (spawnedCount >= ALL_TARGET) return 0;
+      // 第1个在开局出现，第30个在 SPAWN_WINDOW_MS 内出现（留出缓冲，避免与片尾 ended 抢同一瞬间）
+      const targetTs = roundStartTs + spawnedCount * SPAWN_SLOT_MS;
+      const wait = targetTs - now;
+      if (wait <= 0) return 120; // 已经落后节拍，尽快补发
+      return Math.min(MAX_NEXT_SPAWN_DELAY_MS, wait);
+    }
+
+    function spawnItem() {
+      if (finished || spawnLock || items.length > 0 || spawnedCount >= ALL_TARGET) return;
+      const edge = Math.floor(Math.random() * 4); // 0上 1右 2下 3左
+      const speed = 1.3 + Math.random() * 1.5;
+      const bubbleW = 78 + Math.random() * 20;
+      const bubbleH = 38;
+      const type = ITEM_POOL[Math.floor(Math.random() * ITEM_POOL.length)];
+      let x, y;
+      if (edge === 0) { x = playArea.x + Math.random() * playArea.w; y = playArea.y + 6; }
+      else if (edge === 1) { x = playArea.x + playArea.w - 6; y = playArea.y + Math.random() * playArea.h; }
+      else if (edge === 2) { x = playArea.x + Math.random() * playArea.w; y = playArea.y + playArea.h - 6; }
+      else { x = playArea.x + 6; y = playArea.y + Math.random() * playArea.h; }
+      const targetX = playArea.x + playArea.w * (0.2 + Math.random() * 0.6);
+      const targetY = playArea.y + playArea.h * (0.2 + Math.random() * 0.55);
+      const dx = targetX - x, dy = targetY - y;
+      const len = Math.hypot(dx, dy) || 1;
+      items.push({
+        id: Math.random().toString(36).slice(2),
+        text: type.text,
+        icon: type.icon,
+        x, y,
+        vx: (dx / len) * speed,
+        vy: (dy / len) * speed,
+        w: bubbleW,
+        h: bubbleH,
+        r: Math.max(bubbleW, bubbleH) * 0.42
+      });
+      spawnedCount += 1;
+      spawnLock = false;
+    }
+
+    function initItems() {
+      spawnItem();
+    }
+
+    function updateTopBar() {
+      topBar.textContent = `剩余道具：${remaining}`;
+    }
+
+    function runMilestone(collected) {
+      if (triggered.has(collected)) return;
+      if (collected === 5) {
+        showPopup("后面这人干嘛呢？");
+      }
+      if (collected === 10) {
+        showPopup("他以为下雨了。");
+      }
+      if (collected === 15) {
+        showPopup("快了快了。");
+      }
+      if (collected === 20) {
+        purse = { x:-40, y:H * 0.30, vx:4.2, life:250 };
+        showPopup("终于要付钱了。");
+      }
+      if (collected === 25) {
+        showPopup("马上！");
+      }
+      if (collected === 30) {
+        stallWrap.style.opacity = "0";
+        showPopup("他走了！轮到你了！");
+      }
+      triggered.add(collected);
+    }
+
+    function createBurst(x, y, label) {
+      const count = 22;
+      for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 * i) / count + Math.random() * 0.4;
+        const speed = 1.5 + Math.random() * 3.4;
+        particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 0.6,
+          life: 26 + Math.floor(Math.random() * 12),
+          size: 3 + Math.random() * 4,
+          text: Math.random() > 0.75 ? label : ""
+        });
+      }
+    }
+
+    function collectRandomItem() {
+      const now = performance.now();
+      if (finished || remaining <= 0 || items.length === 0) return;
+      if (now - lastCollectAt < 360) return;
+      lastCollectAt = now;
+      const idx = Math.floor(Math.random() * items.length);
+      const got = items[idx];
+      createBurst(got.x, got.y, got.text);
+      playItemBreakSound();
+      items.splice(idx, 1);
+      remaining -= 1;
+      updateTopBar();
+      hideHandCoordsUntil = performance.now() + 480;
+      setStatusText(`收集到：${got.text}`);
+      runMilestone(ALL_TARGET - remaining);
+      if (remaining <= 0) {
+        clearTimeout(nextSpawnTimeout);
+        nextSpawnTimeout = null;
+        completeGame();
+      }
+      else if (spawnedCount < ALL_TARGET) {
+        spawnLock = true;
+        const delay = getNextSpawnDelay();
+        clearTimeout(nextSpawnTimeout);
+        nextSpawnTimeout = setTimeout(() => {
+          spawnLock = false;
+          spawnItem();
+        }, delay);
+      }
+    }
+
+    function tryCollectByTouch(normX, normY) {
+      if (finished || roundLost) return;
+      if (!items.length) return;
+      const item = items[0];
+      const hx = playArea.x + normX * playArea.w;
+      const hy = playArea.y + normY * playArea.h;
+      const dx = hx - item.x;
+      const dy = hy - item.y;
+      const touchRadius = Math.max(item.w, item.h) * 0.5 + 18;
+      if (dx * dx + dy * dy <= touchRadius * touchRadius) {
+        collectRandomItem();
+      }
+    }
+
+    function completeGame() {
+      if (finished) return;
+      roundLost = false;
+      finished = true;
+      clearInterval(spawnTimer);
+      clearTimeout(nextSpawnTimeout);
+      if (hasStallVideo()) {
+        try {
+          stallVideo.pause();
+        } catch (_) {}
+      }
+      resultPanel.style.display = "flex";
+      claimPancakeWrap.style.display = "none";
+      claimPancakeImg.removeAttribute("src");
+      claimPancakeImg.style.display = "none";
+      claimPancakeFallback.style.display = "flex";
+      setStatusText("收集完成！可领取煎饼。");
+    }
+
+    function drawItemBubble(item) {
+      const mapped = itemImages[item.text];
+      if (mapped && mapped.complete) {
+        const size = Math.max(item.w, item.h) + 12;
+        ctx.save();
+        ctx.drawImage(mapped, item.x - size / 2, item.y - size / 2, size, size);
+        ctx.restore();
+        return;
+      }
+      ctx.save();
+      ctx.translate(item.x, item.y);
+      ctx.fillStyle = "rgba(0,0,0,0.92)";
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 2;
+      const w = item.w, h = item.h, r = 12;
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 + r, -h / 2);
+      ctx.lineTo(w / 2 - r, -h / 2);
+      ctx.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
+      ctx.lineTo(w / 2, h / 2 - r);
+      ctx.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2);
+      ctx.lineTo(-w / 2 + r, h / 2);
+      ctx.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
+      ctx.lineTo(-w / 2, -h / 2 + r);
+      ctx.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "bold 18px Microsoft YaHei";
+      ctx.fillText(item.text, 0, 0);
+      ctx.restore();
+    }
+
+    function updateAndDrawItems() {
+      if (roundLost) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(playArea.x, playArea.y, playArea.w, playArea.h);
+        ctx.clip();
+        for (const item of items) drawItemBubble(item);
+        ctx.restore();
+        return;
+      }
+      const left = playArea.x + 8;
+      const right = playArea.x + playArea.w - 8;
+      const top = playArea.y + 8;
+      const bottom = playArea.y + playArea.h - 8;
+      for (const item of items) {
+        item.x += item.vx;
+        item.y += item.vy;
+        if (item.x < left || item.x > right) item.vx *= -1;
+        if (item.y < top || item.y > bottom) item.vy *= -1;
+        item.x = Math.max(left, Math.min(right, item.x));
+        item.y = Math.max(top, Math.min(bottom, item.y));
+      }
+      for (let i = 0; i < items.length; i++) {
+        for (let j = i + 1; j < items.length; j++) {
+          const a = items[i], b = items[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const minDist = a.r + b.r;
+          if (dist < minDist) {
+            const nx = dx / dist, ny = dy / dist;
+            const overlap = (minDist - dist) * 0.5;
+            a.x -= nx * overlap; a.y -= ny * overlap;
+            b.x += nx * overlap; b.y += ny * overlap;
+            const tx = a.vx, ty = a.vy;
+            a.vx = b.vx; a.vy = b.vy;
+            b.vx = tx; b.vy = ty;
+          }
+        }
+      }
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(playArea.x, playArea.y, playArea.w, playArea.h);
+      ctx.clip();
+      for (const item of items) drawItemBubble(item);
+      ctx.restore();
+    }
+
+    function updateAndDrawParticles() {
+      if (roundLost) return;
+      if (!particles.length) return;
+      const next = [];
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.04;
+        p.vx *= 0.985;
+        p.life -= 1;
+        if (p.life > 0) {
+          next.push(p);
+          const alpha = Math.max(0, p.life / 36);
+          ctx.globalAlpha = alpha;
+          if (p.text) {
+            ctx.font = "12px Microsoft YaHei";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 3;
+            ctx.strokeText(p.text, p.x, p.y);
+            ctx.fillStyle = "#fff";
+            ctx.fillText(p.text, p.x, p.y);
+          } else {
+            ctx.fillStyle = "#c88a4b";
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+        }
+      }
+      particles = next;
+    }
+
+    function drawHandCrosshair(c, cx, cy, stroke, fill) {
+      c.strokeStyle = stroke;
+      c.lineWidth = 2.5;
+      c.beginPath();
+      c.arc(cx, cy, 20, 0, Math.PI * 2);
+      c.stroke();
+      c.beginPath();
+      c.moveTo(cx - 26, cy);
+      c.lineTo(cx + 26, cy);
+      c.moveTo(cx, cy - 26);
+      c.lineTo(cx, cy + 26);
+      c.stroke();
+      c.fillStyle = fill;
+      c.beginPath();
+      c.arc(cx, cy, 8, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    /** 在掌心位置绘制自定义图或默认蓝色准星（锚点对准 cx,cy） */
+    function drawHandPointerAt(c, cx, cy) {
+      const size = Math.max(40, Number(ASSET_CONFIG.handPointerSizePx) || 88);
+      const img1Ready = handPointerImage && handPointerImage.complete && handPointerImage.naturalWidth > 0;
+      if (img1Ready) {
+        const ax = Number(ASSET_CONFIG.handPointerAnchorX);
+        const ay = Number(ASSET_CONFIG.handPointerAnchorY);
+        const hx = Number.isFinite(ax) ? Math.min(1, Math.max(0, ax)) : 0.5;
+        const hy = Number.isFinite(ay) ? Math.min(1, Math.max(0, ay)) : 0.5;
+        c.save();
+        c.globalAlpha = 0.92;
+        c.drawImage(handPointerImage, cx - size * hx, cy - size * hy, size, size);
+        c.restore();
+      } else {
+        drawHandCrosshair(c, cx, cy, "rgba(80,150,255,0.95)", "rgba(80,150,255,0.2)");
+      }
+    }
+
+    function drawHandPreview(c) {
+      if (finished || roundLost) return;
+      c.save();
+      c.globalAlpha = 0.92;
+      if (handPreview) {
+        const x = playArea.x + handPreview.x * playArea.w;
+        const y = playArea.y + handPreview.y * playArea.h;
+        drawHandPointerAt(c, x, y);
+      }
+      c.restore();
+    }
+
+    function updatePurse() {
+      if (roundLost || !purse) return;
+      purse.x += purse.vx;
+      purse.life -= 1;
+      if (walletImage && walletImage.complete) {
+        const size = 56;
+        ctx.drawImage(walletImage, purse.x - size / 2, purse.y - size / 2, size, size);
+      } else {
+        ctx.font = "44px serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("👛", purse.x, purse.y);
+      }
+      if (purse.life <= 0 || purse.x > W + 60) purse = null;
+    }
+
+    function animate() {
+      if (!finished && roundStartTs) {
+        const elapsed = performance.now() - roundStartTs;
+        if (!hasStallVideo()) {
+          if (elapsed >= ROUND_DURATION_MS) {
+            clearTimeout(nextSpawnTimeout);
+            if (remaining > 0) failRoundByTimeout();
+            else completeGame();
+          }
+        } else if (elapsed > ROUND_DURATION_MS + 15000 && remaining > 0) {
+          clearTimeout(nextSpawnTimeout);
+          stallVideo.pause();
+          failRoundByTimeout();
+        }
+      }
+      ctx.fillStyle = "#1a1208";
+    ctx.fillRect(0, 0, W, H);
+    ctx.clearRect(0, 0, W, H);
+      ctx.save();
+      ctx.strokeStyle = "rgba(95,68,45,0.18)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(playArea.x, playArea.y, playArea.w, playArea.h);
+      ctx.restore();
+      updateAndDrawItems();
+      updateAndDrawParticles();
+      updatePurse();
+      if (handCanvas && hctx) {
+        hctx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+        drawHandPreview(hctx);
+      }
+      refreshHandCoordsStatusLine();
+      requestAnimationFrame(animate);
+    }
+
+    /** 与舞台触点一致的归一化坐标（0–100%），每帧刷新避免被「收集到」盖住 */
+    function refreshHandCoordsStatusLine() {
+      if (finished || roundLost) return;
+      if (performance.now() < hideHandCoordsUntil) return;
+      if (handPreview) {
+        const x = (handPreview.x * 100).toFixed(1);
+        const y = (handPreview.y * 100).toFixed(1);
+        setStatusText(`移动手掌触碰道具即可消除… X:${x}% Y:${y}%`);
+      }
+    }
+
+    function roiNormToFullFrame(nx, ny) {
+      const { sx, sy, vw, vh, roiW, roiH } = lastRoiCrop;
+      if (!vw || !vh) return { x: nx, y: ny };
+      return {
+        x: (sx + nx * roiW) / vw,
+        y: (sy + ny * roiH) / vh
+      };
+    }
+
+    function processHandsResults(multiLandmarks) {
+      if (finished) {
+        handPreview = null;
+        if (roundLost) setStatusText("排队失败，请点击「重新开始」");
+        else setStatusText("收集完成！可领取煎饼。");
+        return;
+      }
+      if (!multiLandmarks || !multiLandmarks.length) {
+        palmSmoothedFull = null;
+        handPreview = null;
+        return;
+      }
+      const lm = multiLandmarks[0];
+      const full = roiNormToFullFrame(lm[9].x, lm[9].y);
+      const a = HAND_TRACK.palmSmooth;
+      if (!palmSmoothedFull) {
+        palmSmoothedFull = { x: full.x, y: full.y };
+      } else {
+        palmSmoothedFull.x = a * palmSmoothedFull.x + (1 - a) * full.x;
+        palmSmoothedFull.y = a * palmSmoothedFull.y + (1 - a) * full.y;
+      }
+      const clamp01 = (v) => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.5);
+      const px = clamp01(1 - palmSmoothedFull.x);
+      const py = clamp01(palmSmoothedFull.y);
+      handPreview = { x: px, y: py };
+      tryCollectByTouch(px, py);
+    }
+
+    function setupHands() {
+      if (typeof Hands === "undefined" || typeof Camera === "undefined") {
+        setStatusText("手势库加载失败，当前可先观察道具动画");
+        showPopup("手势库加载失败，当前可先观察道具动画", 2300);
+        return;
+      }
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: HAND_TRACK.modelComplexity,
+        minDetectionConfidence: HAND_TRACK.minDetectionConfidence,
+        minTrackingConfidence: HAND_TRACK.minTrackingConfidence
+      });
+      hands.onResults((results) => {
+        if (finished) {
+          handPreview = null;
+          return;
+        }
+        processHandsResults(results.multiHandLandmarks);
+      });
+
+      const cam = new Camera(cameraPreview, {
+        onFrame: async () => {
+          const vw = cameraPreview.videoWidth || cameraPreview.clientWidth;
+          const vh = cameraPreview.videoHeight || cameraPreview.clientHeight;
+          if (!vw || !vh) {
+            lastRoiCrop = { sx: 0, sy: 0, vw: 1, vh: 1, roiW: 1, roiH: 1 };
+            try {
+              await hands.send({ image: cameraPreview });
+            } catch (_) {}
+            return;
+          }
+          lastRoiCrop = { sx: 0, sy: 0, vw, vh, roiW: vw, roiH: vh };
+          try {
+            await hands.send({ image: cameraPreview });
+          } catch (_) {}
+        },
+        width: HAND_TRACK.camIdealW,
+        height: HAND_TRACK.camIdealH
+      });
+      cam.start().catch(() => {
+        setStatusText("摄像头开启失败，请检查权限");
+        showPopup("摄像头开启失败，请检查权限", 2400);
+      });
+    }
+
+    function resetGame() {
+      items = [];
+      particles = [];
+      remaining = ALL_TARGET;
+      spawnedCount = 0;
+      roundStartTs = performance.now();
+      finished = false;
+      roundLost = false;
+      purse = null;
+      spawnLock = false;
+      triggered.clear();
+      clearTimeout(nextSpawnTimeout);
+      palmSmoothedFull = null;
+      hideHandCoordsUntil = 0;
+      stallWrap.style.transform = "translateY(0)";
+      stallWrap.style.opacity = "1";
+      failPanel.style.display = "none";
+      resultPanel.style.display = "none";
+      restartBtn.style.display = "none";
+      claimBtn.style.display = "inline-block";
+      claimPancakeWrap.style.display = "none";
+      claimPancakeImg.removeAttribute("src");
+      claimPancakeImg.style.display = "none";
+      claimPancakeFallback.style.display = "flex";
+      setStatusText("挥挥手，随机收集道具！");
+      updateTopBar();
+      restartStallVideoWithRoundClock();
+      initItems();
+      clearInterval(spawnTimer);
+      spawnTimer = null;
+    }
+
+    function showClaimPancakeImage() {
+      const src = ASSET_CONFIG.pancakeImageSrc;
+      if (src) {
+        claimPancakeImg.onload = () => {
+          claimPancakeImg.style.display = "block";
+          claimPancakeFallback.style.display = "none";
+        };
+        claimPancakeImg.onerror = () => {
+          claimPancakeImg.style.display = "none";
+          claimPancakeFallback.style.display = "flex";
+          reportAssetError("煎饼成品图", src);
+        };
+        claimPancakeImg.src = src;
+      } else {
+        claimPancakeImg.style.display = "none";
+        claimPancakeFallback.style.display = "flex";
+      }
+    }
+
+    claimBtn.addEventListener("click", () => {
+      setStatusText("恭喜！您用30个道具赶走了前面的人。这是您的煎饼！");
+      showPopup("恭喜！您用30个道具赶走了前面的人。这是您的煎饼！", 2600);
+      claimBtn.style.display = "none";
+      claimPancakeWrap.style.display = "flex";
+      showClaimPancakeImage();
+      restartBtn.style.display = "inline-block";
+    });
+    restartBtn.addEventListener("click", resetGame);
+    failRequeueBtn.addEventListener("click", resetGame);
+    audioToggleBtn.addEventListener("click", async () => {
+      if (!stallVideo.src) {
+        setStatusText("请先配置摊位视频路径");
+        return;
+      }
+      try {
+        stallVideo.muted = false;
+        stallVideo.volume = 1;
+        await stallVideo.play();
+        audioToggleBtn.style.display = "none";
+      } catch (e) {
+        stallVideo.muted = true;
+        setStatusText("浏览器阻止了有声播放，请再点击一次");
+      }
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (!stallVideo.src) return;
+      if (document.hidden) stallVideo.pause();
+      else if (!finished && !roundLost) stallVideo.play().catch(() => {});
+    });
+
+    setupSceneImages();
+    roundStartTs = performance.now();
+    restartStallVideoWithRoundClock();
+    updateTopBar();
+    initItems();
+    spawnTimer = null;
+    animate();
+    setupHands();
+  
+    
+
+    // 鼠标/触摸点击收集道具
+    document.addEventListener("click", function(e) {
+      try {
+        if (finished || roundLost || !stallVideo.src) return;
+        var rect = canvas.getBoundingClientRect();
+        if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+        tryCollectByTouch((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+      } catch(ex) {}
+    });
+    document.addEventListener("touchstart", function(e) {
+      try {
+        if (finished || roundLost || !stallVideo.src) return;
+        var t = e.touches[0];
+        var rect = canvas.getBoundingClientRect();
+        if (t.clientX < rect.left || t.clientX > rect.right || t.clientY < rect.top || t.clientY > rect.bottom) return;
+        tryCollectByTouch((t.clientX - rect.left) / rect.width, (t.clientY - rect.top) / rect.height);
+      } catch(ex) {}
+    }, { passive: true });
+
+    // Seek Bar
+    var seekBar = document.getElementById("videoSeekBar");
+    var seekFill = document.getElementById("videoSeekFill");
+    var seekBarVisible = false, isSeeking = false;
+    function updateSeekBar() {
+      if (!stallVideo.src || !stallVideo.duration) return;
+      var pct = (stallVideo.currentTime / stallVideo.duration) * 100;
+      seekFill.style.width = pct + "%";
+      if (!seekBarVisible && stallVideo.duration > 0) { seekBarVisible = true; seekBar.classList.add("show"); }
+    }
+    function scrub(e) {
+      if (!stallVideo.src || !stallVideo.duration) return;
+      var rect = seekBar.getBoundingClientRect();
+      var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      stallVideo.currentTime = pct * stallVideo.duration;
+      seekFill.style.width = (pct * 100) + "%";
+    }
+    if (seekBar) {
+      seekBar.addEventListener("click", scrub);
+      seekBar.addEventListener("mousedown", function(e){isSeeking=true;scrub(e);});
+      document.addEventListener("mousemove", function(e){if(isSeeking)scrub(e);});
+      document.addEventListener("mouseup", function(){isSeeking=false;});
+    }
+    if (stallVideo) {
+      stallVideo.addEventListener("timeupdate", updateSeekBar);
+      stallVideo.addEventListener("ended", function(){seekFill.style.width="100%";});
+    }
+
+</script>
+</body>
+</html>
