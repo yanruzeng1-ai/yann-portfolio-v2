@@ -222,7 +222,7 @@ a { color: inherit; text-decoration: none; cursor: none; }
 }
 
   
-.liquid-ether-container { position: fixed; inset: 0; z-index: 0; opacity: 1; pointer-events: none; }
+.liquid-ether-container { position: fixed; inset: 0; z-index: 0; opacity: 1; pointer-events: none; background: #000; }
 .liquid-ether-container canvas { width: 100% !important; height: 100% !important; }
   </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -413,13 +413,13 @@ function LiquidEther(container, options) {
         col = mix(col, color3, smoothstep(0.3, 0.6, speed));
         col = mix(col, color4, smoothstep(0.6, 1.0, speed));
         float alpha = texture2D(tDensity, vUv).a;
-        col *= 0.5 + 0.5 * alpha;
+        col *= alpha;
         gl_FragColor = vec4(col, 1.0);
       }
       };
 
   // Setup Three.js
-  renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: false });
+  renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(container.clientWidth, container.clientHeight);
 
@@ -1032,5 +1032,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeIframe(
 </script>
 </body>
 </html>
+
+
 
 
