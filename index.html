@@ -64,8 +64,8 @@ a { color: inherit; text-decoration: none; cursor: none; }
 #hero {
   height: 100vh; min-height: 650px; display: flex; flex-direction: column;
   align-items: center; justify-content: center; text-align: center; gap: 22px;
-  position: relative; z-index: 2; overflow: hidden;
-  background: radial-gradient(ellipse 70% 55% at 50% 45%, rgba(126,207,192,.06) 0%, rgba(167,139,250,.03) 40%, transparent 70%);
+  position: relative; z-index: 2;
+  background: #050505;
 }
 .hero-rings { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .hero-rings .ring {
@@ -83,6 +83,7 @@ a { color: inherit; text-decoration: none; cursor: none; }
   animation: gradientShift 8s ease infinite, fadeInUp 1s ease both;
   -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
   filter: drop-shadow(0 0 80px rgba(126,207,192,.35)); position: relative; z-index: 1;
+  text-shadow: 0 0 40px rgba(126,207,192,.3);
 }
 .hero-name .cb {
   display: inline-block; width: 3px; height: .8em; background: var(--wl); margin-left: 6px;
@@ -225,7 +226,7 @@ a { color: inherit; text-decoration: none; cursor: none; }
 
   
 .hero-name-wrap { position: relative; display: inline-block; }
-.liquid-ether-container { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 700px; height: 200px; z-index: -1; opacity: 0.7; pointer-events: none; }
+.liquid-ether-container { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 900px; height: 280px; z-index: 0; opacity: 0.65; pointer-events: none; }
 .liquid-ether-container canvas { width: 100% !important; height: 100% !important; }
   </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
