@@ -224,7 +224,8 @@ a { color: inherit; text-decoration: none; cursor: none; }
 }
 
   
-.liquid-ether-container { position: absolute; inset: 0; z-index: 0; opacity: 0.55; pointer-events: none; }
+.hero-name-wrap { position: relative; display: inline-block; }
+.liquid-ether-container { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 700px; height: 200px; z-index: -1; opacity: 0.7; pointer-events: none; }
 .liquid-ether-container canvas { width: 100% !important; height: 100% !important; }
   </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -236,9 +237,12 @@ a { color: inherit; text-decoration: none; cursor: none; }
 <div id="cursor-glow"></div>
 <div id="cursor-dot"></div>
 <section id="hero">
-  <div id="liquid-ether-container" class="liquid-ether-container"></div>
+
   <div class="hero-rings"><div class="ring"></div><div class="ring"></div><div class="ring"></div></div>
+  <div class="hero-name-wrap">
+  <div id="liquid-ether-container" class="liquid-ether-container"></div>
   <h1 class="hero-name"><span id="typewriter"></span><span class="cb"></span></h1>
+</div>
   <p class="hero-sub">数字艺术家 / AI 视觉创作者</p>
   <div class="hero-divider"></div>
   <p class="hero-tagline">探索虚拟与现实的边缘</p>
